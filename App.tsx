@@ -1,33 +1,21 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import TaskView from './components/TaskView';
 import TaskDetailView from './components/TaskDetailView';
-import HabitView from './components/HabitView';
+import HabitView, { HabitStatsView } from './components/HabitView';
 import FocusView from './components/FocusView';
 import MatrixView from './components/MatrixView';
 import CalendarView from './components/CalendarView';
-import HabitStatsView from './components/HabitStatsView';
 import KanbanView from './components/KanbanView';
 import TagsView from './components/TagsView';
-import { HabitReminderSheet } from './components/HabitReminderSheet';
-import { ThemeStep } from './components/ThemeStep';
-import { ListStep } from './components/ListStep';
 import { Task, Priority, ViewType, Habit, FocusCategory, List, AppSettings, FocusSession, Subtask } from './types';
 import { loadFromStorage, saveToStorage, STORAGE_KEYS } from './services/storageService';
 import { initFirebase, loginWithGoogle, logoutUser } from './services/firebaseService';
 import { fetchCalendarEvents, createCalendarEvent, updateCalendarEvent } from './services/googleCalendarService';
 import { requestNotificationPermission, sendNotification, playAlarmSound } from './services/notificationService';
 import { X, LogOut, RefreshCw, AlertCircle } from 'lucide-react';
-import { isSameMinute, format } from 'date-fns';
-
-const PRESET_LISTS = [
-    { id: 'Work', color: '#3b82f6' },
-    { id: 'Personal', color: '#10b981' },
-    { id: 'Shopping', color: '#f59e0b' },
-    { id: 'Fitness', color: '#ef4444' },
-    { id: 'Travel', color: '#8b5cf6' },
-    { id: 'Reading', color: '#ec4899' },
-];
+import { isSameMinute } from 'date-fns';
 
 const App: React.FC = () => {
   // --- Main App State ---
@@ -36,9 +24,7 @@ const App: React.FC = () => {
   const [focusTaskId, setFocusTaskId] = useState<string | undefined>(undefined);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSettings, setShowSettings] = useState(false);
-  const [settings, setSettings] = useState<AppSettings>(() => loadFromStorage(STORAGE_KEYS.SETTINGS, {
-      themeColor: 'blue'
-  }));
+  const [settings, setSettings] = useState<AppSettings>(() => loadFromStorage(STORAGE_KEYS.SETTINGS, {}));
   
   // --- Sidebar State ---
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -80,10 +66,6 @@ const App: React.FC = () => {
   const [isFirebaseReady, setIsFirebaseReady] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // --- Reminder State ---
-  const [activeHabitForReminder, setActiveHabitForReminder] = useState<Habit | null>(null);
-  const lastReminderTimeRef = useRef<string | null>(null);
-
   // --- Persistence Effects ---
   useEffect(() => saveToStorage(STORAGE_KEYS.TASKS, tasks), [tasks]);
   useEffect(() => saveToStorage(STORAGE_KEYS.LISTS, lists), [lists]);
@@ -107,18 +89,12 @@ const App: React.FC = () => {
 
       const checkReminders = () => {
           const now = new Date();
-          const nowStr = format(now, 'HH:mm');
-          
-          // Avoid triggering multiple times in the same minute
-          if (lastReminderTimeRef.current === nowStr) return;
-          
-          let notificationSent = false;
-
-          // 1. Task Reminders
           tasks.forEach(task => {
               if (task.isCompleted || task.isDeleted) return;
 
+              // Check specific reminder time OR due date time if not all day
               let triggerDate: Date | undefined;
+              
               if (task.reminder) {
                   triggerDate = new Date(task.reminder);
               } else if (task.dueDate && !task.isAllDay) {
@@ -126,39 +102,16 @@ const App: React.FC = () => {
               }
 
               if (triggerDate && isSameMinute(now, triggerDate)) {
+                  // Trigger Alarm
                   sendNotification(task.title, task.description || "It's time!");
-                  if (!notificationSent) {
-                      playAlarmSound();
-                      notificationSent = true;
-                  }
+                  playAlarmSound();
               }
           });
-
-          // 2. Habit Reminders
-          habits.forEach(habit => {
-              if (habit.isArchived) return;
-              if (habit.reminders?.includes(nowStr)) {
-                  const todayStr = format(now, 'yyyy-MM-dd');
-                  // Only remind if not completed today
-                  if (!habit.history[todayStr]?.completed) {
-                      setActiveHabitForReminder(habit);
-                      sendNotification(habit.name, habit.quote || "Time for your habit!");
-                      if (!notificationSent) {
-                          playAlarmSound();
-                          notificationSent = true;
-                      }
-                  }
-              }
-          });
-          
-          if (notificationSent || activeHabitForReminder) {
-             lastReminderTimeRef.current = nowStr;
-          }
       };
 
-      const intervalId = setInterval(checkReminders, 10000); // Check every 10s to hit the minute
+      const intervalId = setInterval(checkReminders, 60000); // Check every minute
       return () => clearInterval(intervalId);
-  }, [tasks, habits]);
+  }, [tasks]);
 
 
   // Responsive sidebar check
@@ -330,250 +283,235 @@ const App: React.FC = () => {
       setLists(lists.filter(l => l.id !== listId));
       // Move tasks in this list to inbox to avoid data loss.
       setTasks(tasks.map(t => t.listId === listId ? { ...t, listId: 'inbox' } : t));
-      
-      if (currentView === listId) {
-          setCurrentView(ViewType.Inbox);
-      }
+      if (currentView === listId) setCurrentView(ViewType.Inbox);
+  };
+
+  const handleSearch = (query: string) => {
+      setSearchQuery(query);
   };
 
   const handleLogin = async () => {
-      try {
-          const result = await loginWithGoogle();
-          setUser(result.user);
-          setAccessToken(result.accessToken || null);
-          setSettings(prev => ({ ...prev, userName: result.user.displayName || '' }));
-      } catch (e: any) {
-          alert(`Login failed: ${e.message}`);
-          console.error(e);
-      }
-  };
-
-  const handleGCalConnect = async () => {
-      setIsSyncing(true);
-      try {
-          const result = await loginWithGoogle();
-          setUser(result.user);
-          setAccessToken(result.accessToken || null);
-          setSettings(prev => ({ ...prev, userName: result.user.displayName || '' }));
-      } catch (e: any) {
-          console.error("GCal Connect Error", e);
-          alert(`Failed to connect Google Calendar: ${e.message}`);
-      } finally {
-          setIsSyncing(false);
-      }
-  };
-
-  const handleTokenExpired = () => {
-      setAccessToken(null);
-      saveToStorage(STORAGE_KEYS.TOKEN, null);
+    try {
+      const { user, accessToken } = await loginWithGoogle();
+      setUser(user);
+      setAccessToken(accessToken);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleLogout = async () => {
       await logoutUser();
       setUser(null);
       setAccessToken(null);
-      saveToStorage(STORAGE_KEYS.TOKEN, null);
-  }
+  };
 
-  const activeTask = tasks.find(t => t.id === selectedTaskId);
+  // --- Render Content Logic ---
+  const renderContent = () => {
+    if (currentView === ViewType.Habits) {
+        return (
+            <HabitView 
+                habits={habits}
+                onToggleHabit={handleToggleHabit}
+                onAddHabit={handleAddHabit}
+                onUpdateHabit={handleAddHabit}
+                onDeleteHabit={handleDeleteHabit}
+                onMenuClick={() => setIsSidebarOpen(true)}
+                onOpenStats={() => setCurrentView(ViewType.HabitStats)}
+            />
+        );
+    }
+
+    if (currentView === ViewType.HabitStats) {
+        return (
+            <HabitStatsView 
+                habits={habits}
+                onClose={() => setCurrentView(ViewType.Habits)}
+            />
+        );
+    }
+
+    if (currentView === ViewType.Focus) {
+        return (
+            <FocusView 
+                categories={focusCategories}
+                onAddCategory={(cat) => setFocusCategories([...focusCategories, cat])}
+                activeTask={focusTaskId ? tasks.find(t => t.id === focusTaskId) : undefined}
+                onFocusComplete={handleFocusComplete}
+                onMenuClick={() => setIsSidebarOpen(true)}
+                focusSessions={focusSessions}
+            />
+        );
+    }
+    
+    if (currentView === ViewType.Matrix) {
+        return (
+            <MatrixView 
+                tasks={tasks}
+                lists={lists}
+                onMenuClick={() => setIsSidebarOpen(true)}
+                onUpdateTask={handleUpdateTask}
+                onAddTask={handleAddTask}
+            />
+        );
+    }
+
+    if (currentView === ViewType.Calendar) {
+        return (
+            <CalendarView 
+                tasks={tasks}
+                lists={lists}
+                habits={habits}
+                accessToken={accessToken}
+                onToggleTask={handleToggleTask}
+                onSelectTask={setSelectedTaskId}
+                onUpdateTask={handleUpdateTask}
+                onMenuClick={() => setIsSidebarOpen(true)}
+                onConnectGCal={handleLogin}
+                onTokenExpired={handleLogout}
+            />
+        );
+    }
+
+    if (currentView === ViewType.Kanban) {
+        return (
+            <KanbanView 
+                tasks={tasks}
+                lists={lists}
+                onToggleTask={handleToggleTask}
+                onSelectTask={setSelectedTaskId}
+                onMenuClick={() => setIsSidebarOpen(true)}
+                onAddTask={handleAddTask}
+            />
+        );
+    }
+
+    if (currentView === ViewType.Tags) {
+        return (
+            <TagsView 
+                tasks={tasks}
+                onToggleTask={handleToggleTask}
+                onSelectTask={setSelectedTaskId}
+                onMenuClick={() => setIsSidebarOpen(true)}
+            />
+        );
+    }
+
+    return (
+        <TaskView 
+            tasks={tasks}
+            lists={lists}
+            viewType={currentView}
+            searchQuery={searchQuery}
+            onToggleTask={handleToggleTask}
+            onAddTask={handleAddTask}
+            onUpdateTask={handleUpdateTask}
+            onSelectTask={setSelectedTaskId}
+            onDeleteTask={handleDeleteTask}
+            onMenuClick={() => setIsSidebarOpen(true)}
+        />
+    );
+  };
 
   return (
-    <div className="flex w-screen bg-slate-50 overflow-hidden font-sans text-slate-900 selection:bg-blue-100 h-[100dvh]">
+    <div className="flex h-screen bg-white">
       {/* Sidebar */}
       <Sidebar 
-          currentView={currentView as ViewType}
+          currentView={currentView as ViewType} 
           onChangeView={(view) => {
               setCurrentView(view);
-              if (window.innerWidth < 768) setIsSidebarOpen(false);
-              setSelectedTaskId(null);
+              if (view !== ViewType.Search) {
+                  setSearchQuery('');
+              }
           }}
           lists={lists}
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          onOpenSettings={() => setShowSettings(true)}
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
           onAddList={handleAddList}
           onDeleteList={handleDeleteList}
+          onOpenSettings={() => setShowSettings(true)}
+          onSearch={handleSearch}
       />
 
       {/* Main Content Area */}
-      <div className={`flex-1 flex flex-col h-full transition-all duration-300 ${isSidebarOpen ? 'md:ml-0' : ''} relative min-w-0`}>
-          
-          <div className="flex-1 overflow-hidden relative">
-            {currentView === ViewType.Habits && (
-                <HabitView 
-                    habits={habits}
-                    onToggleHabit={handleToggleHabit}
-                    onUpdateHabit={handleAddHabit}
-                    onAddHabit={handleAddHabit}
-                    onDeleteHabit={handleDeleteHabit}
-                    onMenuClick={() => setIsSidebarOpen(true)}
-                    onOpenStats={() => setCurrentView(ViewType.HabitStats)}
-                />
-            )}
-            {currentView === ViewType.HabitStats && (
-                <HabitStatsView 
-                    habits={habits}
-                    onClose={() => setCurrentView(ViewType.Habits)}
-                />
-            )}
-            {currentView === ViewType.Focus && (
-                <FocusView 
-                    categories={focusCategories}
-                    onAddCategory={(c) => setFocusCategories([...focusCategories, c])}
-                    activeTask={tasks.find(t => t.id === focusTaskId)}
-                    onFocusComplete={handleFocusComplete}
-                    onMenuClick={() => setIsSidebarOpen(true)}
-                    focusSessions={focusSessions}
-                />
-            )}
-            {currentView === ViewType.Matrix && (
-                <MatrixView 
-                    tasks={tasks} 
-                    lists={lists}
-                    onMenuClick={() => setIsSidebarOpen(true)}
-                    onUpdateTask={handleUpdateTask}
-                    onAddTask={handleAddTask}
-                />
-            )}
-            {currentView === ViewType.Calendar && (
-                <CalendarView 
-                    tasks={tasks}
-                    lists={lists}
-                    habits={habits}
-                    accessToken={accessToken}
-                    onToggleTask={handleToggleTask}
-                    onSelectTask={(id) => setSelectedTaskId(id)}
-                    onUpdateTask={handleUpdateTask}
-                    onMenuClick={() => setIsSidebarOpen(true)}
-                    onConnectGCal={handleGCalConnect}
-                    onTokenExpired={handleTokenExpired}
-                />
-            )}
-            {currentView === ViewType.Kanban && (
-                <KanbanView
-                    tasks={tasks}
-                    lists={lists}
-                    onToggleTask={handleToggleTask}
-                    onSelectTask={(id) => setSelectedTaskId(id)}
-                    onMenuClick={() => setIsSidebarOpen(true)}
-                    onAddTask={handleAddTask}
-                />
-            )}
-            {currentView === ViewType.Tags && (
-                <TagsView 
-                    tasks={tasks}
-                    onToggleTask={handleToggleTask}
-                    onSelectTask={(id) => setSelectedTaskId(id)}
-                    onMenuClick={() => setIsSidebarOpen(true)}
-                />
-            )}
-            {![ViewType.Habits, ViewType.HabitStats, ViewType.Focus, ViewType.Matrix, ViewType.Calendar, ViewType.Kanban, ViewType.Tags].includes(currentView as any) && (
-                <TaskView 
-                    tasks={tasks} 
-                    lists={lists} 
-                    viewType={currentView}
-                    searchQuery={searchQuery}
-                    onToggleTask={handleToggleTask}
-                    onAddTask={handleAddTask}
-                    onUpdateTask={handleUpdateTask}
-                    onDeleteTask={handleDeleteTask} 
-                    onSelectTask={(id) => setSelectedTaskId(id)}
-                    onMenuClick={() => setIsSidebarOpen(true)}
-                />
-            )}
-          </div>
+      <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+          {renderContent()}
       </div>
 
-      {/* Detail View - Fixed Positioning for Overlay over Boards */}
-      {selectedTaskId && activeTask && (
-         <div className="fixed inset-y-0 right-0 w-full md:w-[450px] z-50 shadow-2xl bg-white border-l border-slate-200 animate-in slide-in-from-right duration-300 md:duration-200">
-             <TaskDetailView 
-                task={activeTask}
-                tasks={tasks}
-                lists={lists}
-                onClose={() => setSelectedTaskId(null)}
-                onUpdateTask={handleUpdateTask}
-                onDeleteTask={handleDeleteTask}
-                onPermanentDelete={handlePermanentDeleteTask}
-                onStartFocus={handleStartFocus}
-                onLinkTask={handleLinkTask}
-             />
-         </div>
+      {/* Task Detail Panel (Slide Over) */}
+      {selectedTaskId && (
+          <div className="absolute inset-0 z-40 bg-white md:bg-black/20 flex justify-end animate-in slide-in-from-right duration-200">
+              <div 
+                  className="absolute inset-0 md:hidden bg-black/20" 
+                  onClick={() => setSelectedTaskId(null)}
+              />
+              <div className="w-full md:w-[480px] h-full bg-white shadow-2xl relative flex flex-col md:rounded-l-2xl overflow-hidden">
+                  {(() => {
+                      const task = tasks.find(t => t.id === selectedTaskId);
+                      if (!task) return null;
+                      return (
+                          <TaskDetailView 
+                              task={task}
+                              lists={lists}
+                              tasks={tasks}
+                              onClose={() => setSelectedTaskId(null)}
+                              onUpdateTask={handleUpdateTask}
+                              onDeleteTask={handleDeleteTask}
+                              onStartFocus={handleStartFocus}
+                              onPermanentDelete={handlePermanentDeleteTask}
+                              onLinkTask={handleLinkTask}
+                          />
+                      );
+                  })()}
+              </div>
+          </div>
       )}
 
-      {/* Habit Reminder Sheet Overlay */}
-      {activeHabitForReminder && (
-         <HabitReminderSheet
-             habit={activeHabitForReminder}
-             onClose={() => setActiveHabitForReminder(null)}
-             onCheckIn={() => {
-                 const todayStr = format(new Date(), 'yyyy-MM-dd');
-                 handleToggleHabit(activeHabitForReminder.id, todayStr);
-                 setActiveHabitForReminder(null);
-             }}
-             onFocus={() => {
-                 setCurrentView(ViewType.Focus);
-                 setActiveHabitForReminder(null);
-             }}
-         />
-      )}
-
-      {/* Settings Modal */}
+      {/* Settings Modal (Simplified) */}
       {showSettings && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-xl animate-in zoom-in-95 max-h-[90vh] overflow-y-auto custom-scrollbar">
-                  <div className="flex justify-between items-center mb-4">
-                      <h2 className="text-xl font-bold text-slate-800">Settings</h2>
-                      <button onClick={() => setShowSettings(false)}><X className="text-slate-400"/></button>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl animate-in zoom-in-95">
+                  <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-xl font-bold text-slate-800">Account & Settings</h2>
+                      <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-400">
+                          <X size={20} />
+                      </button>
                   </div>
+                  
                   <div className="space-y-6">
-                      <div className="flex items-center gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                          {user || accessToken ? (
-                             <>
-                                {user?.photoURL ? (
-                                    <img src={user.photoURL} alt="Avatar" className="w-12 h-12 rounded-full" />
-                                ) : (
-                                    <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">G</div>
-                                )}
-                                <div className="flex-1">
-                                    <div className="font-bold text-slate-800">{user?.displayName || "Google User"}</div>
-                                    <div className="text-xs text-slate-500">{user?.email || "Connected via Token"}</div>
-                                </div>
-                                <button onClick={handleLogout} className="text-red-500 p-2"><LogOut size={20}/></button>
-                             </>
+                      <div className="bg-slate-50 p-4 rounded-xl flex items-center gap-4">
+                          {user ? (
+                              <>
+                                  <img src={user.photoURL} className="w-12 h-12 rounded-full" />
+                                  <div className="flex-1">
+                                      <div className="font-bold text-slate-800">{user.displayName}</div>
+                                      <div className="text-xs text-slate-500">{user.email}</div>
+                                  </div>
+                                  <button onClick={handleLogout} className="text-slate-500 hover:text-red-500 p-2">
+                                      <LogOut size={20} />
+                                  </button>
+                              </>
                           ) : (
-                              <button onClick={handleLogin} className="w-full py-2 bg-blue-600 text-white rounded-lg font-bold flex items-center justify-center gap-2">
-                                  <span>Sign in with Google</span>
-                              </button>
+                              <div className="flex-1 text-center py-2">
+                                  <p className="text-sm text-slate-500 mb-3">Sign in to sync with Google Calendar</p>
+                                  <button onClick={handleLogin} className="bg-white border border-slate-200 text-slate-700 font-bold py-2 px-4 rounded-xl shadow-sm hover:bg-slate-50 transition-colors">
+                                      Sign in with Google
+                                  </button>
+                              </div>
                           )}
                       </div>
-
-                      <ThemeStep 
-                         selected={settings.themeColor || 'blue'} 
-                         onSelect={(color) => setSettings({ ...settings, themeColor: color })}
-                      />
-
-                      <div className="border-t border-slate-100 pt-4">
-                          <ListStep 
-                              selected={lists.map(l => l.name)}
-                              onToggle={(name) => {
-                                  const existing = lists.find(l => l.name === name);
-                                  if (existing) {
-                                      handleDeleteList(existing.id);
-                                  } else {
-                                      const preset = PRESET_LISTS.find(p => p.id === name);
-                                      if (preset) handleAddList(name, preset.color);
-                                  }
-                              }}
-                          />
-                      </div>
-
-                      <div className="flex justify-end pt-2">
-                           <button onClick={() => setShowSettings(false)} className="px-6 py-2 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-900 transition-colors">
-                               Done
-                           </button>
+                      
+                      {/* Placeholder for other settings */}
+                      <div className="space-y-2">
+                          <h3 className="text-sm font-bold text-slate-400 uppercase">General</h3>
+                          <div className="p-3 bg-white border border-slate-100 rounded-xl text-slate-600 flex justify-between cursor-pointer hover:bg-slate-50">
+                              <span>Theme</span>
+                              <span className="text-blue-500 font-medium">System</span>
+                          </div>
+                           <div className="p-3 bg-white border border-slate-100 rounded-xl text-slate-600 flex justify-between cursor-pointer hover:bg-slate-50">
+                              <span>Smart Parsing</span>
+                              <span className="text-blue-500 font-medium">On</span>
+                          </div>
                       </div>
                   </div>
               </div>

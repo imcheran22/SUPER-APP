@@ -1,15 +1,14 @@
+
 import React, { useState } from 'react';
 import { Task, Priority, ViewType, List } from '../types';
 import { 
   Circle, CheckCircle2, Flag, Calendar as CalendarIcon, Plus, 
   CheckSquare, ChevronRight, User, Hash, Inbox, Repeat, MapPin, Paperclip,
   Search, Layers, Archive, Sun, CalendarDays, Clock, XCircle, Trash2, FileText, Menu,
-  MoreVertical, Check, FolderInput, Target, LayoutList, Share2, EyeOff, X, CornerDownRight,
-  Sparkles, Loader2
+  MoreVertical, Check, FolderInput, Target, LayoutList, Share2, EyeOff, X, CornerDownRight
 } from 'lucide-react';
 import { format, isSameDay, addDays, isAfter, isBefore, startOfDay, differenceInCalendarDays } from 'date-fns';
 import TaskInputSheet from './TaskInputSheet';
-import { parseSmartTask } from '../services/aiService';
 
 interface TaskViewProps {
   tasks: Task[];
@@ -33,10 +32,7 @@ const TaskView: React.FC<TaskViewProps> = ({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showMenu, setShowMenu] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-  
-  // Quick Add State
-  const [quickAddTitle, setQuickAddTitle] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [showMoveMenu, setShowMoveMenu] = useState(false);
 
   // Filter tasks based on view
   const filteredTasks = tasks.filter(task => {
@@ -159,41 +155,13 @@ const TaskView: React.FC<TaskViewProps> = ({
      toggleSelectMode();
   }
 
-  // --- Smart Add Handler ---
-  const handleSmartAdd = async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!quickAddTitle.trim()) return;
-      
-      setIsProcessing(true);
-      try {
-          const parsed = await parseSmartTask(quickAddTitle);
-          
-          // Determine list ID based on view
-          let targetListId = 'inbox';
-          if (viewType !== ViewType.Inbox && viewType !== ViewType.Today && viewType !== ViewType.Next7Days && viewType !== ViewType.All && viewType !== ViewType.Search) {
-              targetListId = viewType as string;
-          }
-
-          const newTask: Task = {
-              id: Date.now().toString(),
-              title: parsed.title,
-              isCompleted: false,
-              priority: parsed.priority,
-              listId: targetListId,
-              tags: parsed.tags,
-              subtasks: [],
-              attachments: [],
-              createdAt: new Date(),
-              dueDate: parsed.dueDate ? new Date(parsed.dueDate) : (viewType === ViewType.Today ? new Date() : undefined)
-          };
-          
-          onAddTask(newTask);
-          setQuickAddTitle('');
-      } catch (err) {
-          console.error(err);
-      } finally {
-          setIsProcessing(false);
-      }
+  const handleBulkMove = (targetListId: string) => {
+      selectedIds.forEach(id => {
+          const task = tasks.find(t => t.id === id);
+          if (task) onUpdateTask({ ...task, listId: targetListId });
+      });
+      setShowMoveMenu(false);
+      toggleSelectMode();
   };
 
   return (
@@ -411,34 +379,13 @@ const TaskView: React.FC<TaskViewProps> = ({
 
       {/* Footer Quick Add / FAB */}
       {viewType !== ViewType.Trash && viewType !== ViewType.Completed && !isSelectMode && (
-          <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-white via-white to-transparent pointer-events-none z-20">
-              <form onSubmit={handleSmartAdd} className="pointer-events-auto flex items-center gap-2 bg-white p-2 rounded-2xl shadow-xl border border-slate-100 transition-all focus-within:ring-2 focus-within:ring-blue-100">
-                  <button 
-                    type="button"
-                    onClick={() => setIsQuickAddOpen(true)}
-                    className="p-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
-                  >
-                      <Plus size={24} />
-                  </button>
-                  <input 
-                      type="text" 
-                      placeholder="I want to..." 
-                      className="flex-1 bg-transparent border-none outline-none text-slate-800 placeholder-slate-400 h-10 px-2"
-                      value={quickAddTitle}
-                      onChange={(e) => setQuickAddTitle(e.target.value)}
-                      disabled={isProcessing}
-                  />
-                  {quickAddTitle.trim() && (
-                      <button 
-                          type="submit"
-                          className="p-2 text-purple-600 bg-purple-50 hover:bg-purple-100 rounded-xl transition-colors disabled:opacity-50"
-                          disabled={isProcessing}
-                          title="Smart Add with AI"
-                      >
-                          {isProcessing ? <Loader2 size={20} className="animate-spin" /> : <Sparkles size={20} />}
-                      </button>
-                  )}
-              </form>
+          <div className="absolute bottom-8 right-8 z-20 animate-in zoom-in duration-300">
+              <button 
+                onClick={() => setIsQuickAddOpen(true)}
+                className="w-14 h-14 bg-blue-600 text-white rounded-full shadow-xl hover:bg-blue-700 hover:scale-105 transition-all active:scale-95 flex items-center justify-center"
+              >
+                  <Plus size={28} />
+              </button>
           </div>
       )}
 
@@ -453,7 +400,10 @@ const TaskView: React.FC<TaskViewProps> = ({
                   <CalendarIcon size={22} />
                   <span className="text-[10px] font-medium">Date</span>
               </button>
-              <button className="flex-1 flex flex-col items-center gap-1 py-2 text-slate-600 hover:bg-slate-50 rounded-lg active:scale-95 transition-all">
+              <button 
+                  onClick={() => setShowMoveMenu(true)}
+                  className="flex-1 flex flex-col items-center gap-1 py-2 text-slate-600 hover:bg-slate-50 rounded-lg active:scale-95 transition-all"
+              >
                   <FolderInput size={22} />
                   <span className="text-[10px] font-medium">Move</span>
               </button>
@@ -465,6 +415,34 @@ const TaskView: React.FC<TaskViewProps> = ({
                   <MoreVertical size={22} />
                   <span className="text-[10px] font-medium">More</span>
               </button>
+          </div>
+      )}
+
+      {/* Bulk Move Modal */}
+      {showMoveMenu && (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-4" onClick={() => setShowMoveMenu(false)}>
+              <div className="bg-white w-full max-w-sm rounded-2xl p-4 shadow-2xl animate-in slide-in-from-bottom sm:zoom-in-95" onClick={e => e.stopPropagation()}>
+                  <h3 className="text-lg font-bold text-slate-800 mb-4 px-2">Move {selectedIds.size} Tasks to...</h3>
+                  <div className="space-y-1 max-h-[60vh] overflow-y-auto">
+                      <button 
+                        onClick={() => handleBulkMove('inbox')}
+                        className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 text-left transition-colors"
+                      >
+                           <Inbox size={20} className="text-blue-500" />
+                           <span className="font-medium text-slate-700">Inbox</span>
+                      </button>
+                      {lists.map(list => (
+                          <button 
+                              key={list.id} 
+                              onClick={() => handleBulkMove(list.id)}
+                              className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-slate-50 text-left transition-colors"
+                          >
+                              <div className="w-5 h-5 rounded-full border border-slate-200" style={{ backgroundColor: list.color }} />
+                              <span className="font-medium text-slate-700">{list.name}</span>
+                          </button>
+                      ))}
+                  </div>
+              </div>
           </div>
       )}
 

@@ -1,4 +1,3 @@
-
 export enum Priority {
   None = 0,
   Low = 1,
@@ -117,13 +116,6 @@ export interface FocusSession {
 }
 
 export interface AppSettings {
-  userName?: string;
-  theme?: 'light' | 'dark';
-  themeColor?: string;
-  stats?: {
-    karmaScore: number;
-    totalFocusMinutes: number;
-    level: number;
-    completedTaskCount: number;
-  };
+  // Authentication is handled via accessToken/user state in App.tsx
+  // No persistent theme or user profile fields here anymore
 }

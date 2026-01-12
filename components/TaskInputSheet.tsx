@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
-  Calendar, Flag, ArrowUp, X, Hash, Check, Sun, Moon, 
-  CalendarDays, Bell, Repeat, Zap, ChevronLeft, ChevronRight
+  Calendar, Flag, FolderInput, ArrowUp, X, Hash, Check, Sun, Moon, 
+  CalendarDays, Bell, Repeat, Zap, ChevronLeft, ChevronRight, Clock,
+  Timer
 } from 'lucide-react';
 import { Task, Priority, List } from '../types';
 import { 
@@ -31,12 +32,11 @@ const TaskInputSheet: React.FC<TaskInputSheetProps> = ({ isOpen, onClose, onAddT
   const [listId, setListId] = useState<string>('inbox');
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
   
-  // Time State
+  // Time & Duration State
   const [startHour, setStartHour] = useState('09');
   const [startMinute, setStartMinute] = useState('00');
   const [endHour, setEndHour] = useState('10');
   const [endMinute, setEndMinute] = useState('00');
-  const [activeTimeField, setActiveTimeField] = useState<'start' | 'end'>('start');
   
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   
@@ -79,13 +79,12 @@ const TaskInputSheet: React.FC<TaskInputSheetProps> = ({ isOpen, onClose, onAddT
     }
   }, [isOpen, initialConfig]);
 
-  // Sync Start/End logic: If start moves past end, push end.
+  // Sync Start/End logic
   useEffect(() => {
       const start = parseInt(startHour) * 60 + parseInt(startMinute);
       const end = parseInt(endHour) * 60 + parseInt(endMinute);
       
       if (end <= start) {
-          // If end is before start, automatically adjust end to be start + 1 hour (wrapping around 24h if needed)
           const newEndTotal = (start + 60) % 1440;
           const newEndH = Math.floor(newEndTotal / 60);
           const newEndM = newEndTotal % 60;
@@ -114,7 +113,6 @@ const TaskInputSheet: React.FC<TaskInputSheetProps> = ({ isOpen, onClose, onAddT
       setListId('inbox');
       setDueDate(undefined);
       
-      // Reset time to next hour
       const now = new Date();
       now.setMinutes(0);
       now.setHours(now.getHours() + 1);
@@ -135,15 +133,19 @@ const TaskInputSheet: React.FC<TaskInputSheetProps> = ({ isOpen, onClose, onAddT
       setParsedData(null);
   };
 
-  const updateTime = (h: string, m: string) => {
-      if (activeTimeField === 'start') {
-          setStartHour(h);
-          setStartMinute(m);
-      } else {
-          setEndHour(h);
-          setEndMinute(m);
-      }
-  };
+  const durationText = useMemo(() => {
+      const start = parseInt(startHour) * 60 + parseInt(startMinute);
+      let end = parseInt(endHour) * 60 + parseInt(endMinute);
+      if (end < start) end += 24 * 60; 
+      
+      const diff = end - start;
+      const h = Math.floor(diff / 60);
+      const m = diff % 60;
+      
+      if (h > 0 && m > 0) return `${h}h ${m}m`;
+      if (h > 0) return `${h}h`;
+      return `${m}m`;
+  }, [startHour, startMinute, endHour, endMinute]);
 
   const handleAddTaskFn = () => {
       const finalTitle = parsedData ? parsedData.cleanTitle : title;
@@ -167,23 +169,19 @@ const TaskInputSheet: React.FC<TaskInputSheetProps> = ({ isOpen, onClose, onAddT
       let finalEndDate: Date | undefined = undefined;
 
       if (finalDate && !finalIsAllDay) {
-          // Set Start Time
           const startH = parseInt(startHour);
           const startM = parseInt(startMinute);
           finalDate = setHours(setMinutes(finalDate, startM), startH);
 
-          // Set End Time
           const endH = parseInt(endHour);
           const endM = parseInt(endMinute);
           finalEndDate = setHours(setMinutes(finalDate, endM), endH);
           
-          // Handle overflow to next day if end time is numerically smaller than start time (e.g. 11PM to 1AM)
           if (endH < startH || (endH === startH && endM < startM)) {
                finalEndDate = addDays(finalEndDate, 1);
           }
       }
 
-      // Calculate duration for compatibility
       let duration = 60;
       if (finalDate && finalEndDate) {
           duration = differenceInMinutes(finalEndDate, finalDate);
@@ -205,7 +203,6 @@ const TaskInputSheet: React.FC<TaskInputSheetProps> = ({ isOpen, onClose, onAddT
           attachments: [],
           reminder: reminder !== 'None' ? new Date() : undefined, 
           repeat: repeat !== 'None' ? repeat : undefined,
-          createdAt: new Date(),
       };
 
       onAddTask(newTask);
@@ -214,30 +211,25 @@ const TaskInputSheet: React.FC<TaskInputSheetProps> = ({ isOpen, onClose, onAddT
   };
 
   const togglePicker = (view: PickerView) => {
-      setActivePicker(activePicker === view ? 'none' : view);
-      if (view === 'date' && activePicker !== 'date') {
-          if (!dueDate) setDueDate(new Date());
-          setCalendarMonth(dueDate || new Date());
+      if (activePicker === view) {
+          setActivePicker('none');
+      } else {
+          setActivePicker(view);
+          if (view === 'date') {
+              if (!dueDate) {
+                  const now = new Date();
+                  setDueDate(now);
+                  setCalendarMonth(now);
+              } else {
+                  setCalendarMonth(dueDate);
+              }
+          }
       }
   };
 
   const insertHash = () => {
     setTitle(prev => prev + (prev.length > 0 && !prev.endsWith(' ') ? ' #' : '#'));
     titleInputRef.current?.focus();
-  };
-
-  const getPriorityIcon = (p: Priority) => {
-      const color = p === Priority.High ? 'text-red-500' : p === Priority.Medium ? 'text-yellow-500' : p === Priority.Low ? 'text-blue-500' : 'text-slate-400';
-      return <Flag size={20} className={color} fill={p !== Priority.None ? "currentColor" : "none"} />;
-  };
-
-  const getPriorityColorClass = (p: Priority) => {
-      switch (p) {
-          case Priority.High: return 'text-red-500';
-          case Priority.Medium: return 'text-yellow-500';
-          case Priority.Low: return 'text-blue-500';
-          default: return 'text-slate-500';
-      }
   };
 
   const allLists = [{ id: 'inbox', name: 'Inbox', color: '#3b82f6' }, ...lists];
@@ -266,6 +258,49 @@ const TaskInputSheet: React.FC<TaskInputSheetProps> = ({ isOpen, onClose, onAddT
       );
   };
 
+  const renderTimePicker = () => (
+      <div className="flex flex-col h-full bg-slate-50">
+          <div className="bg-white border-b border-slate-100 py-3 flex items-center justify-center gap-2">
+              <Clock size={16} className="text-slate-400" />
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Duration:</span>
+              <span className="text-lg font-bold text-blue-600">{durationText}</span>
+          </div>
+
+          <div className="flex-1 flex divide-x divide-slate-200">
+              <div className="flex-1 flex flex-col">
+                  <div className="bg-slate-100 text-slate-500 text-xs font-bold uppercase py-2 text-center">Start Time</div>
+                  <div className="flex-1 relative bg-white">
+                       <div className="absolute inset-0 flex items-center justify-center gap-1">
+                           <WheelPicker items={hours} selected={startHour} onSelect={setStartHour} />
+                           <span className="text-xl font-bold text-slate-300">:</span>
+                           <WheelPicker items={minutes} selected={startMinute} onSelect={setStartMinute} />
+                       </div>
+                  </div>
+              </div>
+
+              <div className="flex-1 flex flex-col">
+                  <div className="bg-slate-100 text-slate-500 text-xs font-bold uppercase py-2 text-center">End Time</div>
+                   <div className="flex-1 relative bg-white">
+                       <div className="absolute inset-0 flex items-center justify-center gap-1">
+                           <WheelPicker items={hours} selected={endHour} onSelect={setEndHour} />
+                           <span className="text-xl font-bold text-slate-300">:</span>
+                           <WheelPicker items={minutes} selected={endMinute} onSelect={setEndMinute} />
+                       </div>
+                  </div>
+              </div>
+          </div>
+          
+          <div className="p-3 bg-white border-t border-slate-100 flex justify-center">
+               <button 
+                  onClick={() => setIsAllDay(!isAllDay)}
+                  className={`px-4 py-2 rounded-full text-sm font-bold transition-colors ${isAllDay ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}
+               >
+                   {isAllDay ? "All Day Task" : "Specific Time"}
+               </button>
+          </div>
+      </div>
+  );
+
   const renderDatePicker = () => {
     const today = new Date();
     const calendarDays = eachDayOfInterval({
@@ -279,7 +314,7 @@ const TaskInputSheet: React.FC<TaskInputSheetProps> = ({ isOpen, onClose, onAddT
     };
 
     return (
-        <div className="flex-1 bg-white flex flex-col animate-in slide-in-from-bottom duration-300 overflow-hidden">
+        <div className="flex-1 bg-white flex flex-col animate-in slide-in-from-bottom duration-300 overflow-hidden h-[400px]">
             <div className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0 border-b border-slate-50">
                  <button onClick={() => togglePicker('none')} className="p-2 -ml-2 text-slate-400 hover:text-slate-600"><X size={24}/></button>
                  <div className="flex gap-6 font-bold text-sm">
@@ -291,7 +326,7 @@ const TaskInputSheet: React.FC<TaskInputSheetProps> = ({ isOpen, onClose, onAddT
 
             {dateTab === 'date' && (
                 <div className="flex-1 overflow-y-auto custom-scrollbar px-4 pb-4">
-                    <div className="grid grid-cols-4 gap-4 mb-8 mt-2">
+                    <div className="grid grid-cols-4 gap-4 mb-8 mt-4">
                         <button onClick={() => setQuickDate(today)} className="flex flex-col items-center gap-2 group">
                             <div className="w-10 h-10 bg-orange-50 rounded-lg flex flex-col items-center justify-center text-orange-500 border border-orange-100 group-hover:bg-orange-100 transition-colors">
                                 <span className="text-[9px] font-bold uppercase mt-0.5">{format(today, 'MMM')}</span>
@@ -350,7 +385,8 @@ const TaskInputSheet: React.FC<TaskInputSheetProps> = ({ isOpen, onClose, onAddT
                                             onClick={() => setDueDate(day)}
                                             className={`
                                                 w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium transition-all
-                                                ${isSelected ? 'bg-orange-500 text-white shadow-md' : isTodayDate ? 'text-orange-500 bg-orange-50' : isCurrentMonth ? 'text-slate-700 hover:bg-slate-100' : 'text-slate-300'}
+                                                ${isSelected ? 'bg-blue-600 text-white shadow-md' : (isCurrentMonth ? 'text-slate-700 hover:bg-slate-100' : 'text-slate-300')}
+                                                ${isTodayDate && !isSelected ? 'text-blue-600 font-bold bg-blue-50' : ''}
                                             `}
                                         >
                                             {format(day, 'd')}
@@ -363,224 +399,154 @@ const TaskInputSheet: React.FC<TaskInputSheetProps> = ({ isOpen, onClose, onAddT
                 </div>
             )}
 
-            {dateTab === 'time' && (
-                <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50">
-                    <div className="p-4 space-y-4">
-                        <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between shadow-sm">
-                             <div className="flex flex-col">
-                                <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">Date</span>
-                                <span className="text-lg font-bold text-slate-800">{dueDate ? format(dueDate, 'EEE, MMM d') : format(new Date(), 'EEE, MMM d')}</span>
-                             </div>
-                             <button 
-                                onClick={() => setIsAllDay(!isAllDay)}
-                                className={`px-4 py-2 rounded-lg font-bold text-xs transition-colors ${isAllDay ? 'bg-orange-500 text-white' : 'bg-slate-100 text-slate-600'}`}
-                             >
-                                 All Day
-                             </button>
-                        </div>
-                        
-                        {!isAllDay && (
-                            <div className="flex gap-2">
-                                {/* Start Time Button */}
-                                <button 
-                                    onClick={() => setActiveTimeField('start')}
-                                    className={`flex-1 p-4 rounded-xl border-2 flex flex-col items-center gap-1 transition-all ${activeTimeField === 'start' ? 'border-orange-500 bg-white shadow-md' : 'border-transparent bg-white shadow-sm'}`}
-                                >
-                                    <span className="text-xs font-bold text-slate-400 uppercase">Start</span>
-                                    <span className="text-2xl font-bold text-slate-800">{startHour}:{startMinute}</span>
-                                </button>
-                                
-                                <div className="flex items-center text-slate-300"><ChevronRight /></div>
-
-                                {/* End Time Button */}
-                                <button 
-                                    onClick={() => setActiveTimeField('end')}
-                                    className={`flex-1 p-4 rounded-xl border-2 flex flex-col items-center gap-1 transition-all ${activeTimeField === 'end' ? 'border-orange-500 bg-white shadow-md' : 'border-transparent bg-white shadow-sm'}`}
-                                >
-                                    <span className="text-xs font-bold text-slate-400 uppercase">End</span>
-                                    <span className="text-2xl font-bold text-slate-800">{endHour}:{endMinute}</span>
-                                </button>
-                            </div>
-                        )}
-
-                        {!isAllDay && (
-                            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex justify-center items-center gap-2 h-48 relative overflow-hidden">
-                                 <WheelPicker 
-                                    items={hours} 
-                                    selected={activeTimeField === 'start' ? startHour : endHour} 
-                                    onSelect={(h) => updateTime(h, activeTimeField === 'start' ? startMinute : endMinute)} 
-                                 />
-                                 <span className="text-2xl font-bold text-slate-300 pb-2">:</span>
-                                 <WheelPicker 
-                                    items={minutes} 
-                                    selected={activeTimeField === 'start' ? startMinute : endMinute} 
-                                    onSelect={(m) => updateTime(activeTimeField === 'start' ? startHour : endHour, m)} 
-                                 />
-                            </div>
-                        )}
-
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden divide-y divide-slate-100">
-                             <div className="flex items-center justify-between p-4 cursor-pointer hover:bg-slate-50 transition-colors">
-                                 <div className="flex items-center gap-3">
-                                     <Bell size={20} className="text-slate-400" />
-                                     <span className="font-medium text-slate-700">Reminder</span>
-                                 </div>
-                                 <div className="flex items-center gap-2">
-                                     <span className="text-orange-500 font-medium text-sm">{reminder}</span>
-                                     {reminder !== 'None' ? (
-                                         <button onClick={(e) => { e.stopPropagation(); setReminder('None'); }}><X size={16} className="text-slate-300 hover:text-red-500"/></button>
-                                     ) : (
-                                        <button onClick={() => setReminder('On time')} className="text-slate-300"><ChevronRight size={16} /></button>
-                                     )}
-                                 </div>
-                             </div>
-                             <div className="flex items-center justify-between p-4 cursor-pointer hover:bg-slate-50 transition-colors">
-                                 <div className="flex items-center gap-3">
-                                     <Repeat size={20} className="text-slate-400" />
-                                     <span className="font-medium text-slate-700">Repeat</span>
-                                 </div>
-                                 <div className="flex items-center gap-1 text-slate-400">
-                                     <span className="text-sm font-medium">{repeat}</span>
-                                     <ChevronRight size={16} />
-                                 </div>
-                             </div>
-                        </div>
-                    </div>
-                 </div>
-            )}
+            {dateTab === 'time' && renderTimePicker()}
         </div>
     );
   };
+
+  const renderPriorityPicker = () => (
+      <div className="bg-slate-50 p-4 border-t border-slate-100 animate-in slide-in-from-bottom">
+          <div className="flex gap-2">
+            {[Priority.None, Priority.Low, Priority.Medium, Priority.High].map(p => (
+                <button
+                    key={p}
+                    onClick={() => { setPriority(p); setActivePicker('none'); }}
+                    className={`flex-1 py-3 rounded-xl flex flex-col items-center justify-center gap-1 border-2 transition-all ${priority === p ? 'bg-white border-blue-500 shadow-sm' : 'bg-white border-transparent hover:bg-slate-100'}`}
+                >
+                    <Flag size={20} className={
+                        p === Priority.High ? 'text-red-500' : 
+                        p === Priority.Medium ? 'text-yellow-500' : 
+                        p === Priority.Low ? 'text-blue-500' : 'text-slate-400'
+                    } fill={p !== Priority.None ? "currentColor" : "none"} />
+                    <span className="text-xs font-bold text-slate-500">{Priority[p]}</span>
+                </button>
+            ))}
+          </div>
+      </div>
+  );
+
+  const renderListPicker = () => (
+      <div className="bg-slate-50 p-4 border-t border-slate-100 animate-in slide-in-from-bottom">
+        <div className="grid grid-cols-2 gap-2 max-h-[200px] overflow-y-auto custom-scrollbar">
+            {allLists.map(l => (
+                <button
+                    key={l.id}
+                    onClick={() => { setListId(l.id); setActivePicker('none'); }}
+                    className={`flex items-center gap-2 p-3 rounded-xl border transition-all ${listId === l.id ? 'bg-white border-blue-500 shadow-sm' : 'bg-white border-transparent hover:bg-slate-100'}`}
+                >
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: l.color }} />
+                    <span className="font-bold text-sm text-slate-700">{l.name}</span>
+                </button>
+            ))}
+        </div>
+      </div>
+  );
 
   if (!isOpen) return null;
 
   return (
     <>
-        <div className="fixed inset-0 bg-black/40 z-50 transition-opacity" onClick={onClose} />
-        <div className="fixed bottom-0 left-0 right-0 bg-white rounded-t-2xl z-50 max-h-[90vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-300">
-            {/* Parsed Chips */}
-            <div className="px-4 pt-4">
-                {renderParsedChips()}
-            </div>
+      <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm transition-opacity" onClick={onClose} />
+      <div className="fixed bottom-0 left-0 right-0 z-50 bg-white rounded-t-2xl shadow-2xl animate-android-bottom-sheet flex flex-col max-h-[85vh] overflow-hidden">
+        
+        {/* Input Area */}
+        <div className="p-4 flex flex-col gap-3">
+          <div className="flex gap-3">
+             <button className="mt-1 flex-shrink-0 text-slate-300">
+                 <Flag size={20} className={priority !== Priority.None ? 'text-blue-500' : ''} fill={priority !== Priority.None ? "currentColor" : "none"} />
+             </button>
+             <div className="flex-1">
+                 <input 
+                     ref={titleInputRef}
+                     value={title}
+                     onChange={(e) => setTitle(e.target.value)}
+                     placeholder="What would you like to do?"
+                     className="w-full text-lg font-medium outline-none placeholder:text-slate-400 bg-transparent"
+                     onKeyDown={(e) => {
+                         if (e.key === 'Enter') handleAddTaskFn();
+                     }}
+                 />
+                 {renderParsedChips()}
+                 <textarea 
+                     value={description}
+                     onChange={(e) => setDescription(e.target.value)}
+                     placeholder="Description"
+                     className="w-full text-sm text-slate-500 outline-none placeholder:text-slate-300 bg-transparent resize-none h-6 mt-1"
+                 />
+             </div>
+          </div>
+          
+          {selectedTags.length > 0 && (
+             <div className="flex gap-2 pl-8 flex-wrap">
+                 {selectedTags.map(tag => (
+                     <span key={tag} className="text-xs bg-blue-50 text-blue-500 px-2 py-1 rounded-md font-medium flex items-center gap-1">
+                         #{tag}
+                         <button onClick={() => setSelectedTags(selectedTags.filter(t => t !== tag))}><X size={12}/></button>
+                     </span>
+                 ))}
+             </div>
+          )}
 
-            {/* Main Input Area */}
-            <div className="p-4 flex gap-3">
-                 <button className="mt-1 text-slate-400 hover:text-blue-500 transition-colors">
-                     <Check className="w-6 h-6 rounded-full border-2 border-slate-300 p-0.5" />
-                 </button>
-                 <div className="flex-1">
-                     <input 
-                         ref={titleInputRef}
-                         value={title}
-                         onChange={(e) => setTitle(e.target.value)}
-                         onKeyDown={(e) => e.key === 'Enter' && handleAddTaskFn()}
-                         placeholder="What would you like to do?"
-                         className="w-full text-lg font-medium outline-none placeholder-slate-400 bg-transparent"
-                     />
-                     <textarea 
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                        placeholder="Description"
-                        rows={1}
-                        className="w-full text-sm text-slate-500 outline-none placeholder-slate-300 bg-transparent mt-1 resize-none h-auto min-h-[20px]"
-                     />
-                 </div>
-            </div>
+          {/* Quick Toolbar */}
+          <div className="flex items-center justify-between mt-2 pl-1">
+              <div className="flex items-center gap-1">
+                  {/* 1. CALENDAR ICON (Due Date) */}
+                  <button 
+                     onClick={() => togglePicker('date')} 
+                     className={`p-2 rounded-lg transition-colors ${activePicker === 'date' || dueDate ? 'text-orange-500 bg-orange-50' : 'text-slate-500 hover:bg-slate-100'}`}
+                  >
+                      <Calendar size={20} />
+                      {dueDate && <span className="text-xs font-bold ml-1">{format(dueDate, 'MMM d')}</span>}
+                  </button>
+                  
+                  {/* 2. FLAG ICON (Priority) */}
+                  <button 
+                     onClick={() => togglePicker('priority')} 
+                     className={`p-2 rounded-lg transition-colors ${activePicker === 'priority' || priority !== Priority.None ? 'bg-slate-100' : 'text-slate-500 hover:bg-slate-100'}`}
+                  >
+                      <Flag 
+                          size={20} 
+                          className={priority === Priority.High ? 'text-red-500' : priority === Priority.Medium ? 'text-yellow-500' : priority === Priority.Low ? 'text-blue-500' : 'text-slate-400'} 
+                          fill={priority !== Priority.None ? "currentColor" : "none"} 
+                      />
+                  </button>
+                  
+                  {/* 3. HASH ICON (Tags / "Ash") */}
+                  <button 
+                     onClick={insertHash}
+                     className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors"
+                  >
+                      <Hash size={20} />
+                  </button>
+                  
+                  {/* 4. LIST SELECTOR (Folder Concept) */}
+                  <button 
+                     onClick={() => togglePicker('list')} 
+                     className={`p-2 rounded-lg transition-colors flex items-center gap-1 ${activePicker === 'list' ? 'bg-slate-100' : 'text-slate-500 hover:bg-slate-100'}`}
+                  >
+                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: currentList.color }} />
+                      <span className="text-xs font-bold text-slate-600 max-w-[80px] truncate">{currentList.name}</span>
+                  </button>
+              </div>
 
-            {/* Toolbar */}
-            <div className="px-2 pb-2">
-                <div className="flex items-center justify-between bg-slate-50 rounded-xl p-2">
-                     <div className="flex items-center gap-1">
-                         <button 
-                            onClick={() => togglePicker('date')} 
-                            className={`p-2 rounded-lg transition-colors ${activePicker === 'date' || dueDate ? 'text-orange-500 bg-orange-50' : 'text-slate-500 hover:bg-slate-200'}`}
-                         >
-                             <Calendar size={20} />
-                             {dueDate && <span className="text-xs font-bold ml-1">{format(dueDate, 'MMM d')}</span>}
-                         </button>
-                         <button 
-                            onClick={() => togglePicker('priority')} 
-                            className={`p-2 rounded-lg transition-colors ${activePicker === 'priority' || priority !== Priority.None ? 'bg-slate-200' : 'text-slate-500 hover:bg-slate-200'}`}
-                         >
-                             {getPriorityIcon(priority)}
-                         </button>
-                         <button 
-                            onClick={insertHash}
-                            className="p-2 rounded-lg text-slate-500 hover:bg-slate-200 transition-colors"
-                         >
-                             <Hash size={20} />
-                         </button>
-                         <button 
-                            onClick={() => togglePicker('list')} 
-                            className="p-2 rounded-lg text-slate-500 hover:bg-slate-200 transition-colors flex items-center gap-1"
-                         >
-                             <div className="w-3 h-3 rounded-full" style={{ backgroundColor: currentList.color }} />
-                             <span className="text-xs font-bold text-slate-600 max-w-[80px] truncate">{currentList.name}</span>
-                         </button>
-                     </div>
-                     <button 
-                        onClick={handleAddTaskFn}
-                        disabled={!title.trim()}
-                        className="w-10 h-10 bg-blue-600 disabled:bg-slate-300 text-white rounded-xl flex items-center justify-center shadow-sm hover:bg-blue-700 transition-all active:scale-95"
-                     >
-                         <ArrowUp size={20} strokeWidth={3} />
-                     </button>
-                </div>
-            </div>
-
-            {/* Active Picker Content */}
-            {activePicker !== 'none' && (
-                <div className="h-[350px] border-t border-slate-100 flex flex-col">
-                    {activePicker === 'date' && renderDatePicker()}
-                    
-                    {activePicker === 'priority' && (
-                        <div className="flex-1 bg-white p-4 animate-in slide-in-from-bottom duration-300">
-                             <div className="flex justify-between items-center mb-4">
-                                 <span className="font-bold text-slate-400 text-sm uppercase">Select Priority</span>
-                                 <button onClick={() => togglePicker('none')}><X size={20} className="text-slate-400"/></button>
-                             </div>
-                             <div className="grid grid-cols-4 gap-3">
-                                 {[Priority.High, Priority.Medium, Priority.Low, Priority.None].map(p => (
-                                     <button
-                                         key={p}
-                                         onClick={() => { setPriority(p); togglePicker('none'); }}
-                                         className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 transition-all ${priority === p ? 'border-current bg-slate-50' : 'border-slate-100 hover:bg-slate-50'}`}
-                                         style={{ color: p === Priority.None ? '#94a3b8' : undefined }}
-                                     >
-                                         <div className={`${getPriorityColorClass(p)}`}>
-                                             <Flag size={24} fill="currentColor" />
-                                         </div>
-                                         <span className={`text-xs font-bold ${getPriorityColorClass(p)}`}>{Priority[p]}</span>
-                                     </button>
-                                 ))}
-                             </div>
-                        </div>
-                    )}
-
-                    {activePicker === 'list' && (
-                         <div className="flex-1 bg-white p-4 animate-in slide-in-from-bottom duration-300 flex flex-col">
-                             <div className="flex justify-between items-center mb-4 shrink-0">
-                                 <span className="font-bold text-slate-400 text-sm uppercase">Select List</span>
-                                 <button onClick={() => togglePicker('none')}><X size={20} className="text-slate-400"/></button>
-                             </div>
-                             <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1">
-                                 {allLists.map(list => (
-                                     <button
-                                         key={list.id}
-                                         onClick={() => { setListId(list.id); togglePicker('none'); }}
-                                         className={`w-full flex items-center gap-3 p-3 rounded-xl transition-colors ${listId === list.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
-                                     >
-                                         <div className="w-4 h-4 rounded-full" style={{ backgroundColor: list.color }} />
-                                         <span className={`flex-1 text-left font-medium ${listId === list.id ? 'text-blue-700' : 'text-slate-700'}`}>{list.name}</span>
-                                         {listId === list.id && <Check size={18} className="text-blue-600" />}
-                                     </button>
-                                 ))}
-                             </div>
-                         </div>
-                    )}
-                </div>
-            )}
+              <button 
+                  onClick={handleAddTaskFn}
+                  disabled={!title && !parsedData}
+                  className="p-2.5 rounded-full bg-blue-600 text-white disabled:bg-slate-200 disabled:text-slate-400 shadow-md transition-all active:scale-95"
+              >
+                  <ArrowUp size={20} strokeWidth={3} />
+              </button>
+          </div>
         </div>
+
+        {/* Expanded Pickers Area */}
+        <div className="transition-all duration-300 ease-in-out overflow-hidden bg-slate-50 border-t border-slate-100">
+           {activePicker === 'date' && renderDatePicker()}
+           {activePicker === 'priority' && renderPriorityPicker()}
+           {activePicker === 'list' && renderListPicker()}
+        </div>
+
+      </div>
     </>
   );
 };
